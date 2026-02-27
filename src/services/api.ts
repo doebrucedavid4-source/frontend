@@ -17,13 +17,20 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     await ensureCsrfToken();
   }
   const csrfToken = getCookie("csrftoken");
+  
+  const headers: HeadersInit = {
+    ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+    ...options.headers,
+  };
+  
+  // Ne pas forcer le Content-Type si on a des FormData (pour multipart/form-data)
+  if (!(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+  
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
-      ...options.headers,
-    },
+    headers,
     ...options,
   });
   if (!response.ok) {
@@ -105,6 +112,13 @@ export const api = {
     image_url?: string;
   }) => fetchAPI(`/books/${id}/`, { method: "PUT", body: JSON.stringify(data) }),
   deleteLivre: (id: number) => fetchAPI(`/books/${id}/`, { method: "DELETE" }),
+  createExemplaires: (livreId: number, data: { nb_exemplaires: number; localisation?: string }) =>
+    fetchAPI(`/books/${livreId}/exemplaires/`, { method: "POST", body: JSON.stringify(data) }),
+  uploadLivreImage: (livreId: number, imageFile: File) => {
+    const formData = new FormData();
+    formData.append("image", imageFile);
+    return fetchAPI(`/books/${livreId}/upload-image/`, { method: "POST", body: formData });
+  },
   getCategories: () => fetchAPI("/categories/"),
   getAuthors: () => fetchAPI("/authors/"),
   createCategorie: (data: { nom: string }) =>
@@ -158,4 +172,6 @@ export const api = {
   getMesReservations: () => fetchAPI("/me/reservations/"),
   getMesPenalites: () => fetchAPI("/me/penalites/"),
   getNotifications: () => fetchAPI("/me/notifications/"),
+  getUnreadNotificationsCount: () => fetchAPI("/me/notifications/unread-count/"),
+  markNotificationsAsRead: () => fetchAPI("/me/notifications/mark-read/", { method: "POST" }),
 };

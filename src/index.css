@@ -434,3 +434,27 @@ html {
   background: linear-gradient(180deg, rgba(12, 20, 35, 0.96) 0%, rgba(10, 18, 32, 0.9) 100%);
   border-right: 1px solid rgba(56, 189, 248, 0.16);
 }
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100svh;
+  overflow-x: hidden;
+}
+
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 768px) {
+  body {
+    background-attachment: scroll;
+  }
+}

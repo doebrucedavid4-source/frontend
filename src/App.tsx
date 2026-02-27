@@ -30,6 +30,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="livres" element={<LivresPage />} />
             <Route path="profil" element={<ProfilePage />} />
+            <Route path="notifications" element={<NotificationsPage />} />
           </Route>
         </Route>
         <Route element={<RequireAuth roles={["ADHERENT"]} />}>
@@ -37,7 +38,6 @@ export default function App() {
             <Route path="mes-demandes" element={<MesDemandesPage />} />
             <Route path="mes-emprunts" element={<MesEmpruntsPage />} />
             <Route path="mes-penalites" element={<MesPenalitesPage />} />
-            <Route path="notifications" element={<NotificationsPage />} />
             <Route path="historique" element={<HistoriquePage />} />
           </Route>
         </Route>

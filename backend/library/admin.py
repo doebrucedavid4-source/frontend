@@ -1,7 +1,18 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Auteur, Categorie, Emprunt, Exemplaire, Livre, Penalite, ReglesBibliotheque, Reservation, Utilisateur
+from .models import (
+    Auteur,
+    Categorie,
+    Emprunt,
+    Exemplaire,
+    Livre,
+    Notification,
+    Penalite,
+    ReglesBibliotheque,
+    Reservation,
+    Utilisateur,
+)
 
 
 @admin.register(Utilisateur)
@@ -31,3 +42,4 @@ admin.site.register(Emprunt)
 admin.site.register(Reservation)
 admin.site.register(Penalite)
 admin.site.register(ReglesBibliotheque)
+admin.site.register(Notification)

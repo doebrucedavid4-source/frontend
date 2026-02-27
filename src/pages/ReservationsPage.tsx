@@ -227,7 +227,7 @@ export default function ReservationsPage() {
                         variant="outline"
                         className="rounded-xl border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 gap-1"
                         onClick={() => handleApprove(r.id)}
-                        disabled={submitting || !returnDates[r.id]}
+                        disabled={submitting}
                       >
                         <Check className="h-3 w-3" />
                         Approuver

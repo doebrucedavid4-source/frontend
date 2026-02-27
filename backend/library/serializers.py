@@ -7,6 +7,7 @@ from .models import (
     Emprunt,
     Exemplaire,
     Livre,
+    Notification,
     Penalite,
     ReglesBibliotheque,
     Reservation,
@@ -245,3 +246,16 @@ class ReglesBibliothequeSerializer(serializers.ModelSerializer):
             "seuil_blocage_penalites",
         ]
         read_only_fields = ["id"]
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "title",
+            "message",
+            "type",
+            "created_at",
+            "read_at",
+        ]

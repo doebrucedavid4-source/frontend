@@ -27,7 +27,11 @@ export function AppLayout() {
   const isAdmin = role === "ADMIN";
 
   return (
-    <div className={`min-h-screen bg-background ${isAdmin ? "admin-theme" : ""}`}>
+    <div
+      className={`min-h-screen min-h-[100svh] overflow-x-hidden bg-background ${
+        isAdmin ? "admin-theme" : ""
+      }`}
+    >
       <Sidebar />
       <div className="lg:pl-[19rem] relative">
         {/* Top wave */}

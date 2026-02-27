@@ -20,6 +20,7 @@ from .models import (
     Emprunt,
     Exemplaire,
     Livre,
+    Notification,
     Penalite,
     ReglesBibliotheque,
     Reservation,
@@ -32,6 +33,7 @@ from .serializers import (
     EmpruntSerializer,
     LivreSerializer,
     LivreWriteSerializer,
+    NotificationSerializer,
     PenaliteSerializer,
     RegistrationSerializer,
     ReservationSerializer,
@@ -67,6 +69,51 @@ def expire_reservations() -> None:
             reservation.exemplaire.save(update_fields=["statut"])
         reservation.statut = Reservation.Statut.EXPIREE
         reservation.save(update_fields=["statut"])
+
+
+def notify_staff_new_reservation(reservation: Reservation) -> None:
+    staff_users = Utilisateur.objects.filter(
+        is_active=True,
+        role__in=[Utilisateur.Role.ADMIN, Utilisateur.Role.BIBLIOTHECAIRE],
+    )
+    if not staff_users.exists():
+        return
+    adherent = reservation.adherent
+    livre = reservation.livre
+    matricule = f" ({adherent.matricule})" if adherent.matricule else ""
+    title = "Nouvelle demande d'emprunt"
+    message = f'{adherent.nom_complet}{matricule} souhaite emprunter "{livre.titre}".'
+    Notification.objects.bulk_create(
+        [
+            Notification(
+                recipient=user,
+                title=title,
+                message=message,
+                type=Notification.Type.DEMANDE,
+            )
+            for user in staff_users
+        ]
+    )
+
+
+def notify_adherent_reservation_ready(reservation: Reservation) -> None:
+    adherent = reservation.adherent
+    livre = reservation.livre
+    expires_at = reservation.expires_at
+    if expires_at:
+        expires_str = timezone.localtime(expires_at).strftime("%d/%m/%Y")
+        message = (
+            f'Votre demande pour "{livre.titre}" a ete acceptee. '
+            f"Vous pouvez venir retirer le livre avant le {expires_str}."
+        )
+    else:
+        message = f'Votre demande pour "{livre.titre}" a ete acceptee. Vous pouvez venir retirer le livre.'
+    Notification.objects.create(
+        recipient=adherent,
+        title="Demande acceptee",
+        message=message,
+        type=Notification.Type.VALIDATION,
+    )
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -195,6 +242,102 @@ class LivreViewSet(viewsets.ModelViewSet):
             )
 
 
+class LivreExemplaireCreateView(APIView):
+    permission_classes = [IsStaff]
+
+    def post(self, request, livre_id: int):
+        try:
+            livre = Livre.objects.get(pk=livre_id)
+        except Livre.DoesNotExist:
+            return Response({"detail": "Livre introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        
+        nb_exemplaires = request.data.get("nb_exemplaires", 1)
+        try:
+            nb_exemplaires = int(nb_exemplaires)
+            if nb_exemplaires <= 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            return Response({"detail": "Le nombre d'exemplaires doit être un entier positif."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        localisation = request.data.get("localisation", "Rayon")
+        
+        created_exemplaires = []
+        for _ in range(nb_exemplaires):
+            exemplaire = Exemplaire.objects.create(
+                livre=livre,
+                code_barres=generate_code_barres(livre),
+                localisation=localisation,
+            )
+            created_exemplaires.append(exemplaire)
+        
+        from .serializers import ExemplaireSerializer
+        return Response(
+            {
+                "detail": f"{nb_exemplaires} exemplaire(s) créé(s) avec succès.",
+                "exemplaires": ExemplaireSerializer(created_exemplaires, many=True).data,
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+class LivreImageUploadView(APIView):
+    permission_classes = [IsStaff]
+
+    def post(self, request, livre_id: int):
+        try:
+            livre = Livre.objects.get(pk=livre_id)
+        except Livre.DoesNotExist:
+            return Response({"detail": "Livre introuvable."}, status=status.HTTP_404_NOT_FOUND)
+        
+        if "image" not in request.FILES:
+            return Response({"detail": "Aucun fichier image fourni."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        image_file = request.FILES["image"]
+        
+        # Valider le type de fichier
+        allowed_types = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+        if image_file.content_type not in allowed_types:
+            return Response(
+                {"detail": "Format d'image non autorisé. Utilisez JPEG, PNG, WebP ou GIF."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Valider la taille (max 5MB)
+        if image_file.size > 5 * 1024 * 1024:
+            return Response(
+                {"detail": "L'image est trop volumineuse (max 5MB)."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Sauvegarder l'image
+        import os
+        import uuid
+        filename = f"livre_{livre.id}_{uuid.uuid4().hex[:8]}.{image_file.name.split('.')[-1]}"
+        media_path = os.path.join("uploads/livres", filename)
+        
+        from django.conf import settings
+        full_path = os.path.join(settings.MEDIA_ROOT, media_path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        
+        with open(full_path, "wb") as f:
+            for chunk in image_file.chunks():
+                f.write(chunk)
+        
+        # Mettre à jour le livre
+        livre.image_url = f"{settings.MEDIA_URL}{media_path}"
+        livre.save(update_fields=["image_url"])
+        
+        from .serializers import LivreSerializer
+        return Response(
+            {
+                "detail": "Image téléchargée avec succès.",
+                "image_url": livre.image_url,
+                "livre": LivreSerializer(livre).data,
+            },
+            status=status.HTTP_200_OK
+        )
+
+
 class CategorieViewSet(viewsets.ModelViewSet):
     queryset = Categorie.objects.all().order_by("nom")
     serializer_class = CategorieSerializer
@@ -227,6 +370,7 @@ class ReservationCreateView(APIView):
         except Livre.DoesNotExist:
             return Response({"detail": "Livre introuvable."}, status=status.HTTP_404_NOT_FOUND)
         reservation = Reservation.objects.create(livre=livre, adherent=request.user)
+        notify_staff_new_reservation(reservation)
         return Response(ReservationSerializer(reservation).data, status=status.HTTP_201_CREATED)
 
 
@@ -422,14 +566,14 @@ class StaffReservationApprouverView(APIView):
         date_retour = parse_date(date_retour_str) if date_retour_str else None
         if not date_retour:
             return Response({"detail": "Date de retour requise."}, status=status.HTTP_400_BAD_REQUEST)
-        if date_retour <= timezone.localdate():
-            return Response({"detail": "Date de retour invalide."}, status=status.HTTP_400_BAD_REQUEST)
+        if date_retour < timezone.localdate():
+            return Response({"detail": "La date de retour doit etre dans le futur."}, status=status.HTTP_400_BAD_REQUEST)
 
         exemplaire = Exemplaire.objects.select_for_update().filter(
             livre=reservation.livre, statut=Exemplaire.Statut.DISPONIBLE
         ).first()
         if not exemplaire:
-            return Response({"detail": "Aucun exemplaire disponible."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Aucun exemplaire disponible pour ce livre."}, status=status.HTTP_400_BAD_REQUEST)
 
         rules = get_rules()
         reservation.statut = Reservation.Statut.PRETE_A_RETIRER
@@ -441,6 +585,7 @@ class StaffReservationApprouverView(APIView):
         exemplaire.statut = Exemplaire.Statut.EN_RESERVATION
         exemplaire.save(update_fields=["statut"])
 
+        notify_adherent_reservation_ready(reservation)
         return Response(ReservationSerializer(reservation).data)
 
 
@@ -515,46 +660,12 @@ class MeEmpruntCreateView(APIView):
     @transaction.atomic
     def post(self, request):
         if request.user.role != Utilisateur.Role.ADHERENT:
-            return Response({"detail": "Accès interdit."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Acces interdit."}, status=status.HTTP_403_FORBIDDEN)
 
-        livre_id = request.data.get("livre")
-        if not livre_id:
-            return Response({"detail": "Livre requis."}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            livre = Livre.objects.get(id=livre_id)
-        except Livre.DoesNotExist:
-            return Response({"detail": "Livre introuvable."}, status=status.HTTP_404_NOT_FOUND)
-
-        exemplaire = (
-            Exemplaire.objects.select_for_update()
-            .filter(livre=livre, statut=Exemplaire.Statut.DISPONIBLE)
-            .first()
+        return Response(
+            {"detail": "Validation requise. Faites une demande d'emprunt."},
+            status=status.HTTP_403_FORBIDDEN,
         )
-        if not exemplaire:
-            return Response({"detail": "Aucun exemplaire disponible."}, status=status.HTTP_400_BAD_REQUEST)
-
-        rules = get_rules()
-        actifs = Emprunt.objects.filter(adherent=request.user, date_retour_effective__isnull=True).count()
-        if actifs >= rules.quota_adherent:
-            return Response({"detail": "Quota d'emprunts atteint."}, status=status.HTTP_400_BAD_REQUEST)
-
-        impayees = Penalite.objects.filter(adherent=request.user, statut=Penalite.Statut.IMPAYEE)
-        montant = impayees.aggregate(total=Sum("montant"))["total"] or Decimal("0")
-        if montant > rules.seuil_blocage_penalites:
-            return Response({"detail": "Adhérent bloqué par pénalités impayées."}, status=status.HTTP_400_BAD_REQUEST)
-
-        date_emprunt = timezone.localdate()
-        date_retour_prevue = date_emprunt + timedelta(days=rules.duree_adherent_jours)
-        emprunt = Emprunt.objects.create(
-            exemplaire=exemplaire,
-            adherent=request.user,
-            date_emprunt=date_emprunt,
-            date_retour_prevue=date_retour_prevue,
-        )
-        exemplaire.statut = Exemplaire.Statut.EMPRUNTE
-        exemplaire.save(update_fields=["statut"])
-        return Response(EmpruntSerializer(emprunt).data, status=status.HTTP_201_CREATED)
 
 
 class MeReservationsView(APIView):
@@ -580,4 +691,25 @@ class MeNotificationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response([])
+        notifications = Notification.objects.filter(recipient=request.user).order_by("-created_at")[:200]
+        return Response(NotificationSerializer(notifications, many=True).data)
+
+
+class MeNotificationsCountUnreadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        unread_count = Notification.objects.filter(recipient=request.user, read_at__isnull=True).count()
+        return Response({"unread_count": unread_count}, status=status.HTTP_200_OK)
+
+
+class MeNotificationsMarkReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        unread_notifications = Notification.objects.filter(
+            recipient=request.user, read_at__isnull=True
+        )
+        count = unread_notifications.count()
+        unread_notifications.update(read_at=timezone.now())
+        return Response({"detail": f"{count} notification(s) marquee(s) comme lue(s)."}, status=status.HTTP_200_OK)

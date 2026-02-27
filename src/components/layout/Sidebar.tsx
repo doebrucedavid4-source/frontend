@@ -22,6 +22,7 @@ const staffNavItems = [
   { to: "/livres", icon: BookOpen, label: "Catalogue" },
   { to: "/emprunts", icon: ArrowLeftRight, label: "Emprunts & Retours" },
   { to: "/reservations", icon: CalendarClock, label: "Réservations" },
+  { to: "/notifications", icon: Bell, label: "Notifications" },
   { to: "/penalites", icon: AlertTriangle, label: "Pénalités" },
 ];
 
@@ -43,6 +44,7 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -61,6 +63,27 @@ export function Sidebar() {
       });
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const fetchUnreadCount = async () => {
+      try {
+        const data = await api.getUnreadNotificationsCount();
+        if (active) {
+          setUnreadCount(data?.unread_count ?? 0);
+        }
+      } catch {
+        // Ignorer les erreurs
+      }
+    };
+    fetchUnreadCount();
+    // Récupérer le compte toutes les 30 secondes
+    const interval = setInterval(fetchUnreadCount, 30000);
+    return () => {
+      active = false;
+      clearInterval(interval);
     };
   }, []);
 
@@ -89,18 +112,33 @@ export function Sidebar() {
       <p className="text-[0.65rem] font-semibold uppercase tracking-[0.15em] text-white/40 px-4 mb-2">
         Navigation
       </p>
-      {(isStaff ? staffNavItems : adherentNavItems).map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.to === "/dashboard"}
-          className={linkClass}
-          onClick={() => setMobileOpen(false)}
-        >
-          <item.icon className="h-[1.1rem] w-[1.1rem] shrink-0" />
-          <span className="truncate">{item.label}</span>
-        </NavLink>
-      ))}
+      {(isStaff ? staffNavItems : adherentNavItems).map((item) => {
+        const isNotifications = item.to === "/notifications";
+        return (
+          <div key={item.to} className="relative">
+            <NavLink
+              to={item.to}
+              end={item.to === "/dashboard"}
+              className={linkClass}
+              onClick={() => {
+                setMobileOpen(false);
+                // Réinitialiser le compteur quand on clique sur les notifications
+                if (isNotifications) {
+                  setUnreadCount(0);
+                }
+              }}
+            >
+              <item.icon className="h-[1.1rem] w-[1.1rem] shrink-0" />
+              <span className="truncate">{item.label}</span>
+            </NavLink>
+            {isNotifications && unreadCount > 0 && (
+              <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[0.65rem] font-bold rounded-full h-5 w-5 flex items-center justify-center">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </div>
+            )}
+          </div>
+        );
+      })}
       {isAdmin && (
         <>
           <p className="text-[0.6rem] font-semibold uppercase tracking-[0.15em] text-white/40 px-4 mt-4 mb-2">

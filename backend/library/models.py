@@ -165,6 +165,23 @@ class Penalite(models.Model):
         ordering = ["-created_at"]
 
 
+class Notification(models.Model):
+    class Type(models.TextChoices):
+        INFO = "INFO", "Information"
+        DEMANDE = "DEMANDE", "Demande d'emprunt"
+        VALIDATION = "VALIDATION", "Validation d'emprunt"
+
+    recipient = models.ForeignKey(Utilisateur, on_delete=models.CASCADE, related_name="notifications")
+    title = models.CharField(max_length=200)
+    message = models.TextField(blank=True)
+    type = models.CharField(max_length=20, choices=Type.choices, default=Type.INFO)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class ReglesBibliotheque(models.Model):
     quota_adherent = models.PositiveIntegerField(default=2)
     quota_bibliothecaire = models.PositiveIntegerField(default=3)

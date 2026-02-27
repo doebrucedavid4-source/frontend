@@ -22,6 +22,12 @@ export default function NotificationsPage() {
     let active = true;
     setLoading(true);
     setError(null);
+    
+    // Marquer les notifications comme lues
+    api.markNotificationsAsRead().catch(() => {
+      // Ignorer les erreurs de marquage
+    });
+    
     api
       .getNotifications()
       .then((data) => {

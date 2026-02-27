@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState, useRef } from "react";
 import { Search, BookOpen, Filter, BookMarked, ShoppingBag, Clock, CheckCircle2, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -25,19 +25,19 @@ const categoryColors = [
 
 const openLibraryCover = (livre: Livre) => {
   const isbn = livre.isbn?.replace(/[^0-9X]/gi, "");
-  if (isbn) {
-    return `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg`;
+  if (isbn && isbn.length >= 10) {
+    return `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
   }
-  return `https://covers.openlibrary.org/b/title/${encodeURIComponent(livre.titre)}-L.jpg`;
+  return `https://covers.openlibrary.org/b/title/${encodeURIComponent(livre.titre)}-M.jpg`;
 };
 
 const fallbackCover = (livre: Livre) => {
   const seed = encodeURIComponent(livre.isbn || `livre-${livre.id}`);
-  return `https://picsum.photos/seed/${seed}/600/900`;
+  return `https://picsum.photos/300/450?random=${livre.id}`;
 };
 
 const coverUrl = (livre: Livre) => {
-  if (livre.image_url && !livre.image_url.includes("picsum.photos")) {
+  if (livre.image_url && livre.image_url.trim()) {
     return livre.image_url;
   }
   return openLibraryCover(livre);
@@ -124,6 +124,19 @@ export default function LivresPage() {
   const [auteurForm, setAuteurForm] = useState({ id: undefined as number | undefined, nom: "" });
   const [saving, setSaving] = useState(false);
   const [selectedBookId, setSelectedBookId] = useState<number | null>(null);
+  const [exemplairesForm, setExemplairesForm] = useState({ nb: 1, localisation: "Rayon" });
+  const [addingExemplaires, setAddingExemplaires] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  
+  const gestionLivresRef = useRef<HTMLDivElement>(null);
+  const gestionCategoriesRef = useRef<HTMLDivElement>(null);
+  const gestionAuteursRef = useRef<HTMLDivElement>(null);
+
+  const scrollToElement = (ref: React.RefObject<HTMLDivElement>) => {
+    setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  };
   const isAdherent = role === "ADHERENT";
   const selectedBook = selectedBookId ? livres.find((l) => l.id === selectedBookId) : null;
   const getActiveReservation = (bookId: number) =>
@@ -135,13 +148,26 @@ export default function LivresPage() {
   const activeReservationForSelected = selectedBook ? getActiveReservation(selectedBook.id) : null;
   const handleCoverError = (e: React.SyntheticEvent<HTMLImageElement>, livre: Livre) => {
     const target = e.currentTarget;
-    if (target.dataset.fallback !== "1") {
-      target.dataset.fallback = "1";
-      target.src = fallbackCover(livre);
+    const attempt = parseInt(target.dataset.fallback || "0");
+    
+    const sources = [
+      openLibraryCover(livre),
+      fallbackCover(livre),
+      `https://via.placeholder.com/300x450?text=${encodeURIComponent(livre.titre.substring(0, 20))}`,
+    ];
+    
+    if (attempt < sources.length - 1) {
+      target.dataset.fallback = String(attempt + 1);
+      target.src = sources[attempt + 1];
       return;
     }
+    
+    // Si tout a échoué, cacher l'image et afficher l'icon
     target.style.display = "none";
-    target.nextElementSibling?.classList.remove("hidden");
+    const fallbackIcon = target.parentElement?.querySelector(".book-icon-fallback");
+    if (fallbackIcon) {
+      fallbackIcon.classList.remove("hidden");
+    }
   };
 
   useEffect(() => {
@@ -180,6 +206,37 @@ export default function LivresPage() {
     if (role !== "ADHERENT") return;
     const data = await api.getMesReservations();
     setReservations(normalizeList<Reservation>(data));
+  };
+
+  const handleAddExemplaires = async () => {
+    if (!selectedBook) return;
+    setAddingExemplaires(true);
+    try {
+      await api.createExemplaires(selectedBook.id, {
+        nb_exemplaires: exemplairesForm.nb,
+        localisation: exemplairesForm.localisation,
+      });
+      await refreshCatalog();
+      setExemplairesForm({ nb: 1, localisation: "Rayon" });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur lors de l'ajout des exemplaires.");
+    } finally {
+      setAddingExemplaires(false);
+    }
+  };
+
+  const handleUploadLivreImage = async (livreId: number, file: File) => {
+    setUploadingImage(true);
+    try {
+      await api.uploadLivreImage(livreId, file);
+      await refreshCatalog();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur lors de l'upload de l'image.");
+    } finally {
+      setUploadingImage(false);
+    }
   };
 
   const handleSaveBook = async () => {
@@ -388,18 +445,18 @@ export default function LivresPage() {
 
           <div className="glass-card rounded-3xl border p-5 space-y-4 lg:col-span-2">
             <div className="flex items-center gap-3">
-              <div className="h-11 w-11 rounded-2xl bg-emerald-500/10 text-emerald-700 flex items-center justify-center">
-                <CheckCircle2 className="h-5 w-5" />
+                <div className="h-11 w-11 rounded-2xl bg-emerald-500/10 text-emerald-700 flex items-center justify-center">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+                    Suivi des demandes
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Toutes les demandes doivent etre validees par le bibliothecaire avant l'emprunt.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-semibold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
-                  Suivi des demandes
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  Vos demandes sont validées par le bibliothécaire avant l'emprunt.
-                </p>
-              </div>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
               {[
                 { label: "En attente", value: reservations.filter(r => r.statut === "EN_ATTENTE").length, icon: Clock, color: "text-amber-600", bg: "bg-amber-500/10" },
@@ -478,10 +535,11 @@ export default function LivresPage() {
                   <img
                     src={coverUrl(livre)}
                     alt={livre.titre}
+                    data-fallback="0"
                     className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-500"
                     onError={(e) => handleCoverError(e, livre)}
                   />
-                  <BookOpen className="h-14 w-14 text-foreground/20 absolute hidden" />
+                  <BookOpen className="book-icon-fallback h-14 w-14 text-foreground/20 absolute hidden" />
                   <div className="absolute top-3 right-3">
                     <StatusBadge
                       status={livre.nb_exemplaires_disponibles > 0 ? "DISPONIBLE" : "EMPRUNTE"}
@@ -529,7 +587,7 @@ export default function LivresPage() {
                       className="mt-3 w-full rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
                     >
                       {getActiveReservation(livre.id)
-                        ? "Déjà demandé"
+                        ? "Demande en cours"
                         : "Demander l'emprunt"}
                     </button>
                   )}
@@ -571,10 +629,11 @@ export default function LivresPage() {
                 <img
                   src={coverUrl(selectedBook)}
                   alt={selectedBook.titre}
+                  data-fallback="0"
                   className="h-full w-full object-cover"
                   onError={(e) => handleCoverError(e, selectedBook)}
                 />
-                <div className="h-80 w-full flex items-center justify-center hidden">
+                <div className="book-icon-fallback h-full w-full flex items-center justify-center hidden bg-gradient-to-br from-slate-900/5 via-transparent to-amber-500/10">
                   <BookOpen className="h-12 w-12 text-muted-foreground/40" />
                 </div>
               </div>
@@ -633,13 +692,77 @@ export default function LivresPage() {
                   <button
                     type="button"
                     disabled={saving || Boolean(getActiveReservation(selectedBook.id))}
-                    onClick={() => handleDemandeEmprunt(selectedBook.id)}
+                    onClick={() => {
+                      handleDemandeEmprunt(selectedBook.id);
+                    }}
                     className="w-full rounded-xl bg-gradient-to-r from-primary to-amber-500 px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/20 disabled:opacity-60"
                   >
                     {getActiveReservation(selectedBook.id)
                       ? "Demande en cours"
                       : "Demander l'emprunt"}
                   </button>
+                )}
+
+                {isStaff && (
+                  <div className="space-y-3 border-t border-border/30 pt-4">
+                    <h3 className="font-semibold text-sm">Ajouter des exemplaires</h3>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={exemplairesForm.nb}
+                        onChange={(e) =>
+                          setExemplairesForm({
+                            ...exemplairesForm,
+                            nb: Math.max(1, Number(e.target.value)),
+                          })
+                        }
+                        placeholder="Nombre"
+                        className="w-20 h-10 rounded-xl"
+                      />
+                      <select
+                        value={exemplairesForm.localisation}
+                        onChange={(e) =>
+                          setExemplairesForm({
+                            ...exemplairesForm,
+                            localisation: e.target.value,
+                          })
+                        }
+                        className="h-10 rounded-xl border border-border bg-card/60 px-3 text-sm flex-1"
+                      >
+                        <option value="Rayon">Rayon</option>
+                        <option value="Réserve">Réserve</option>
+                        <option value="Magasin">Magasin</option>
+                        <option value="Autre">Autre</option>
+                      </select>
+                      <button
+                        onClick={handleAddExemplaires}
+                        disabled={addingExemplaires}
+                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      >
+                        Ajouter
+                      </button>
+                    </div>
+
+                    <h3 className="font-semibold text-sm mt-4">Télécharger une image</h3>
+                    <div className="flex gap-2">
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={(e) => {
+                          const file = e.currentTarget.files?.[0];
+                          if (file && selectedBook) {
+                            handleUploadLivreImage(selectedBook.id, file);
+                            e.currentTarget.value = "";
+                          }
+                        }}
+                        disabled={uploadingImage}
+                        className="flex-1 text-sm"
+                      />
+                      <label className="text-xs text-muted-foreground">Max 5MB (JPEG, PNG, WebP, GIF)</label>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -649,7 +772,7 @@ export default function LivresPage() {
 
       {isStaff && (
         <div className="mt-10 space-y-8">
-          <div className="glass-card rounded-3xl border p-6 space-y-4">
+          <div className="glass-card rounded-3xl border p-6 space-y-4" ref={gestionLivresRef}>
             <h2 className="text-xl font-semibold">Gestion des livres</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input
@@ -722,7 +845,7 @@ export default function LivresPage() {
                   <div className="flex gap-2">
                     <button
                       className="text-primary"
-                      onClick={() =>
+                      onClick={() => {
                         setBookForm({
                           id: l.id,
                           titre: l.titre,
@@ -731,8 +854,9 @@ export default function LivresPage() {
                           auteurs_ids: l.auteurs.map((a) => a.id),
                           description: l.description ?? "",
                           image_url: l.image_url ?? "",
-                        })
-                      }
+                        });
+                        scrollToElement(gestionLivresRef);
+                      }}
                     >
                       Modifier
                     </button>
@@ -746,7 +870,7 @@ export default function LivresPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="glass-card rounded-3xl border p-6 space-y-3">
+            <div className="glass-card rounded-3xl border p-6 space-y-3" ref={gestionCategoriesRef}>
               <h2 className="text-lg font-semibold">Catégories</h2>
               <div className="flex gap-2">
                 <Input
@@ -767,7 +891,13 @@ export default function LivresPage() {
                   <div key={c.id} className="flex items-center justify-between rounded-xl border px-3 py-2 text-sm">
                     <span>{c.nom}</span>
                     <div className="flex gap-2">
-                      <button className="text-primary" onClick={() => setCatForm({ id: c.id, nom: c.nom })}>
+                      <button 
+                        className="text-primary" 
+                        onClick={() => {
+                          setCatForm({ id: c.id, nom: c.nom });
+                          scrollToElement(gestionCategoriesRef);
+                        }}
+                      >
                         Modifier
                       </button>
                       <button className="text-destructive" onClick={() => handleDeleteCategorie(c.id)}>
@@ -779,7 +909,7 @@ export default function LivresPage() {
               </div>
             </div>
 
-            <div className="glass-card rounded-3xl border p-6 space-y-3">
+            <div className="glass-card rounded-3xl border p-6 space-y-3" ref={gestionAuteursRef}>
               <h2 className="text-lg font-semibold">Auteurs</h2>
               <div className="flex gap-2">
                 <Input
@@ -800,7 +930,13 @@ export default function LivresPage() {
                   <div key={a.id} className="flex items-center justify-between rounded-xl border px-3 py-2 text-sm">
                     <span>{a.nom}</span>
                     <div className="flex gap-2">
-                      <button className="text-primary" onClick={() => setAuteurForm({ id: a.id, nom: a.nom })}>
+                      <button 
+                        className="text-primary" 
+                        onClick={() => {
+                          setAuteurForm({ id: a.id, nom: a.nom });
+                          scrollToElement(gestionAuteursRef);
+                        }}
+                      >
                         Modifier
                       </button>
                       <button className="text-destructive" onClick={() => handleDeleteAuteur(a.id)}>
