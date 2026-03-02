@@ -3,6 +3,7 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+let csrfTokenCache: string | null = null;
 
 function getCookie(name: string): string | null {
   const value = `; ${document.cookie}`;
@@ -11,12 +12,48 @@ function getCookie(name: string): string | null {
   return null;
 }
 
+function getCsrfToken(): string | null {
+  return getCookie("csrftoken") || csrfTokenCache;
+}
+
+function extractErrorMessage(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  if ("detail" in data) {
+    return String((data as { detail?: unknown }).detail ?? "");
+  }
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      const msg = value.map((item) => String(item)).join(", ");
+      if (msg) parts.push(`${key}: ${msg}`);
+      continue;
+    }
+    if (value && typeof value === "object") {
+      const nested = Object.entries(value as Record<string, unknown>)
+        .map(([nestedKey, nestedValue]) => {
+          if (Array.isArray(nestedValue)) {
+            return `${nestedKey}: ${nestedValue.map((item) => String(item)).join(", ")}`;
+          }
+          return `${nestedKey}: ${String(nestedValue)}`;
+        })
+        .filter(Boolean)
+        .join(", ");
+      if (nested) parts.push(`${key}: ${nested}`);
+      continue;
+    }
+    if (value != null) {
+      parts.push(`${key}: ${String(value)}`);
+    }
+  }
+  return parts.length ? parts.join(" | ") : null;
+}
+
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   const method = (options.method || "GET").toUpperCase();
   if (!SAFE_METHODS.has(method)) {
     await ensureCsrfToken();
   }
-  const csrfToken = getCookie("csrftoken");
+  const csrfToken = getCsrfToken();
   
   const headers: HeadersInit = {
     ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
@@ -37,9 +74,8 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     let message = `API Error: ${response.status} ${response.statusText}`;
     try {
       const data = await response.json();
-      if (data && typeof data === "object" && "detail" in data) {
-        message = String((data as { detail: unknown }).detail || message);
-      }
+      const extracted = extractErrorMessage(data);
+      if (extracted) message = extracted;
     } catch {
       // ignore parse errors
     }
@@ -54,11 +90,20 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
 }
 
 async function ensureCsrfToken() {
-  if (getCookie("csrftoken")) return;
-  await fetch(`${API_BASE_URL}/auth/csrf/`, {
+  if (getCsrfToken()) return;
+  const resp = await fetch(`${API_BASE_URL}/auth/csrf/`, {
     method: "GET",
     credentials: "include",
   });
+  if (!resp.ok) return;
+  try {
+    const data = await resp.json();
+    if (data && typeof data === "object" && "csrfToken" in data) {
+      csrfTokenCache = String((data as { csrfToken?: unknown }).csrfToken || "");
+    }
+  } catch {
+    // ignore parse errors
+  }
 }
 
 export function normalizeList<T>(data: unknown): T[] {
